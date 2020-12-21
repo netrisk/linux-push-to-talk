@@ -36,7 +36,6 @@ class KeyMonitor(object):
     UNMUTED = 0
     MUTED = 1
 
-    F1_KEYCODE = 65470
     F12_KEYCODE = 65481
     """
     Heavily borrowed from PyKeyLogger
