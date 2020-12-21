@@ -117,6 +117,8 @@ class PushToTalk(gtk.StatusIcon):
             if data_type == "MUTED":
                 if data == KeyMonitor.UNMUTED:
                     self.set_ui_talk()
+                elif data == KeyMonitor.UNMUTED_LOCKED:
+                    self.set_ui_talk_locked()
                 elif data == KeyMonitor.MUTED:
                     self.reset_ui()
         return True
@@ -134,6 +136,13 @@ class PushToTalk(gtk.StatusIcon):
             'icons/talk.png'
         ))
         self.set_tooltip_text('Microphone Active')
+
+    def set_ui_talk_locked(self):
+        self.set_from_file(os.path.join(
+            os.path.dirname(__file__),
+            'icons/talk_locked.png'
+        ))
+        self.set_tooltip_text('Microphone Active Locked')
 
     def set_ui_setkey(self):
         self.set_from_file(os.path.join(
@@ -160,10 +169,15 @@ class PushToTalk(gtk.StatusIcon):
         self.logger.debug("Process spawned")
         GObject.timeout_add(PushToTalk.INTERVAL, self.read_incoming_pipe)
 
-    def set_key(self, *arguments):
-        self.logger.debug("Attempting to set key...")
+    def set_ptt_key(self, *arguments):
+        self.logger.debug("Attempting to set PTT key...")
         self.set_ui_setkey()
-        self.return_pipe.put(("SET", 1, ))
+        self.return_pipe.put(("SET", KeyMonitor.TYPE_PTT, ))
+
+    def set_lock_key(self, *arguments):
+        self.logger.debug("Attempting to set lock key...")
+        self.set_ui_setkey()
+        self.return_pipe.put(("SET", KeyMonitor.TYPE_LOCK, ))
 
     def change_interface(self, action):
         verb = action.get_name()
@@ -191,12 +205,20 @@ class PushToTalk(gtk.StatusIcon):
             'Menu',
         ),
             (
-                'SetKey',
+                'SetPTTKey',
                 None,
-                'Set Key',
+                'Set PTT Key',
                 None,
                 'Set key to use for push-to-talk',
-                self.set_key,
+                self.set_ptt_key,
+        ),
+            (
+                'SetLockKey',
+                None,
+                'Set Lock Key',
+                None,
+                'Set key to use to lock push-to-talk',
+                self.set_lock_key,
         ), ]
         for interface in self.INTERFACES:
             if self.audio_interface.verb != interface.verb:
@@ -216,7 +238,7 @@ class PushToTalk(gtk.StatusIcon):
         self.manager.insert_action_group(action_group, 0)
         self.manager.add_ui_from_string(self.menu_xml)
         self.menu = self.manager.get_widget(
-            '/Menubar/Menu/SetKey').props.parent
+            '/Menubar/Menu/SetPTTKey').props.parent
         self.connect('popup-menu', self.on_popup_menu)
 
     def on_popup_menu(self, status, button, time):
@@ -229,7 +251,8 @@ class PushToTalk(gtk.StatusIcon):
             <ui>
                 <menubar name="Menubar">
                     <menu action="Menu">
-                        <menuitem action="SetKey"/>
+                        <menuitem action="SetPTTKey"/>
+                        <menuitem action="SetLockKey"/>
                         <separator/>
             """
         for audio_source_verb, audio_item in audio_xml.items():

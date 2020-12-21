@@ -34,8 +34,13 @@ class KeyMonitor(object):
     PRESS = 1
 
     UNMUTED = 0
-    MUTED = 1
+    UNMUTED_LOCKED = 1
+    MUTED = 2
 
+    TYPE_PTT = 1
+    TYPE_LOCK = 2
+
+    MAYUS_LEFT_KEYCODE = 65505
     F12_KEYCODE = 65481
     """
     Heavily borrowed from PyKeyLogger
@@ -48,8 +53,11 @@ class KeyMonitor(object):
         self.pipe = pipe
         self.return_pipe = return_pipe
 
-        self.configured_keycode = None
+        self.configured_keycode_ptt = None
+        self.configured_keycode_lock = None
         self.state = KeyMonitor.MUTED
+        self.locked = False
+        self.ptt_pressed = False
 
         if test == True:
             self.handler = self.print_action
@@ -60,22 +68,31 @@ class KeyMonitor(object):
     def configuration_file(self):
         return os.path.expanduser("~/.push_to_talk_key")
 
-    def get_configured_keycode(self):
-        if not self.configured_keycode:
+    def update_configured_keycodes(self):
+        if not self.configured_keycode_ptt:
             try:
                 with open(self.configuration_file, "r") as infile:
-                    keycode = infile.read()
-                    self.configured_keycode = int(keycode)
+                    keycodes = map(int, infile.readline().split(","))
+                    self.configured_keycode_ptt = keycodes[0]
+                    if len(keycodes) >= 2:
+                        self.configured_keycode_lock = keycodes[1]
+                    else:
+                        self.configured_keycode_lock = KeyMonitor.MAYUS_LEFT_KEYCODE
             except:
-                self.configured_keycode = KeyMonitor.F12_KEYCODE
-        return self.configured_keycode
+                self.configured_keycode_ptt = KeyMonitor.F12_KEYCODE
+                self.configured_keycode_lock = KeyMonitor.MAYUS_LEFT_KEYCODE
 
-    def set_configured_keycode(self, keycode):
+    def set_configured_keycode(self, keycode, set_type):
         self.logger.info("Setting keycode to %s" % keycode)
+        if set_type == KeyMonitor.TYPE_PTT:
+            self.configured_keycode_ptt = keycode
+        elif set_type == KeyMonitor.TYPE_LOCK:
+            self.configured_keycode_lock = keycode
+            self.pipe.put(("MUTED", self.state, ))
         try:
             with open(self.configuration_file, "w") as outfile:
-                outfile.write(str(keycode))
-                self.configured_keycode = None
+                outfile.write(str(self.configured_keycode_ptt) + "," +
+                              str(self.configured_keycode_lock))
             return True
         except Exception as e:
             self.logger.exception(e)
@@ -91,10 +108,30 @@ class KeyMonitor(object):
         self.state = state
 
     def interface_handler(self, key, action):
-        configured = self.get_configured_keycode()
-        if action == KeyMonitor.PRESS and key == configured:
+        self.update_configured_keycodes()
+
+        # Get PTT key status
+        if key == self.configured_keycode_ptt:
+            if action == KeyMonitor.PRESS:
+                self.ptt_pressed = True
+            elif action == KeyMonitor.RELEASE:
+                self.ptt_pressed = False
+
+        # Check if locked state must be toggled
+        if self.ptt_pressed and action == KeyMonitor.PRESS and \
+           key == self.configured_keycode_lock:
+            self.locked = not self.locked
+            if self.locked:
+                self.set_state(KeyMonitor.UNMUTED_LOCKED)
+            else:
+                self.set_state(KeyMonitor.UNMUTED)
+
+        # Check for Mute/Unmute changes
+        if self.locked or key != self.configured_keycode_ptt:
+            return
+        if action == KeyMonitor.PRESS:
             self.set_state(KeyMonitor.UNMUTED)
-        elif action == KeyMonitor.RELEASE and key == configured:
+        elif action == KeyMonitor.RELEASE:
             self.set_state(KeyMonitor.MUTED)
 
     def print_action(self, key, action):
@@ -144,9 +181,10 @@ class KeyMonitor(object):
             self.logger.debug("Key info %s" % keysym)
             data_object = self.return_pipe.get_nowait()
             data_type = data_object[0]
+            set_type = data_object[1]
             self.logger.debug("Got data %s" % str(data_object))
             if data_type == "SET":
-                self.set_configured_keycode(keysym)
+                self.set_configured_keycode(keysym, set_type)
             self.handler(keysym, action)
         else:
             self.handler(keysym, action)
